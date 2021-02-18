@@ -39,6 +39,9 @@
 #include <set>
 #include "nan.h"
 
+// #define log(fmt, args...) { printf("%s [%d]: ", __FUNCTION__, __LINE__); printf(fmt, args);}
+#define log(fmt, args...)
+
 #ifdef _WIN32
 # define snprintf _snprintf_s
 #endif
@@ -620,7 +623,8 @@ namespace zmq {
   Local<Value> Socket::GetSockOpt(int option) {
     T value = 0;
     size_t len = sizeof(T);
-    while (true) {
+    while (true)
+    {
       int rc = zmq_getsockopt(socket_, option, &value, &len);
       if (rc < 0) {
         if(zmq_errno()==EINTR) {
@@ -1199,8 +1203,7 @@ namespace zmq {
 
   NAN_METHOD(Socket::Sendv) {
     Socket* socket = GetSocket(info);
-    if (socket->state_ != STATE_READY)
-      return info.GetReturnValue().Set(false);
+    if (socket->state_ != STATE_READY) return info.GetReturnValue().Set(false);
 
     int events;
     size_t events_size = sizeof(events);
@@ -1210,11 +1213,9 @@ namespace zmq {
     Local<Array> batch = info[0].As<Array>();
     size_t len = batch->Length();
 
-    if (len == 0)
-      return info.GetReturnValue().Set(true);
+    if (len == 0) return info.GetReturnValue().Set(true);
 
-    if (len % 2 != 0)
-      return Nan::ThrowTypeError("Batch length must be even!");
+    if (len % 2 != 0) return Nan::ThrowTypeError("Batch length must be even!");
 
     for (uint32_t i = 0; i < len; i += 2) {
       if (checkPollOut) {
@@ -1235,45 +1236,42 @@ namespace zmq {
         }
       }
 
-      Local<Object> buf = batch->Get(Nan::GetCurrentContext(), i).ToLocalChecked().As<Object>();
+      Local<Value> dataToSend = batch->Get(Nan::GetCurrentContext(), i).ToLocalChecked().As<Object>();
       Local<Number> flagsObj = batch->Get(Nan::GetCurrentContext(), i + 1).ToLocalChecked().As<Number>();
 
       int flags = Nan::To<int>(flagsObj).FromJust();
 
-#if ZERO_COPY_MESSAGE_SEND
-      /* Non-copying implementation. */
-      OutgoingMessage msg_p(buf);
-#else
-      /* Copying implementation. */
       zmq_msg_t msg;
-      int rc;
-      size_t len = Buffer::Length(buf);
-      rc = zmq_msg_init_size(&msg, len);
-      if (rc != 0)
-        return Nan::ThrowError(ErrorMessage());
+      
+      {
+        v8::Isolate* isolate = info.GetIsolate();
+        v8::String::Utf8Value utfValue(isolate, dataToSend);
+        const std::string message(*utfValue);
+        if (zmq_msg_init_size(&msg, message.size()) != 0)
+          return Nan::ThrowError(ErrorMessage());
 
-      char* cp = static_cast<char *>(zmq_msg_data(&msg));
-      const char* dat = Buffer::Data(buf);
-      std::copy(dat, dat + len, cp);
-      zmq_msg_t* msg_p = &msg;
-#endif
+        std::copy(message.begin(), message.end(), static_cast<char*>(zmq_msg_data(&msg)));
+      }
 
-      while (true) {
-        int rc;
-      #if ZMQ_VERSION_MAJOR == 2
-        rc = zmq_send(socket->socket_, msg_p, flags);
-      #elif ZMQ_VERSION_MAJOR == 3
-        rc = zmq_sendmsg(socket->socket_, msg_p, flags);
-      #else
-        rc = zmq_msg_send(msg_p, socket->socket_, flags);
+      log("ZMQ_VERSION_MAJOR: %d\n", ZMQ_VERSION_MAJOR);
+      
+      assert(ZMQ_VERSION_MAJOR >= 3);
+      while (true)
+      {
+        #if ZMQ_VERSION_MAJOR == 3
+        int rc = zmq_sendmsg(socket->socket_, &msg, flags);
+        #else
+        int rc = zmq_msg_send(&msg, socket->socket_, flags);
         checkPollOut = false;
-      #endif
-        if (rc < 0){
-          if (zmq_errno() == EINTR) {
-            continue;
-          }
+        #endif
+
+        if (rc < 0)
+        {
+          if (zmq_errno() == EINTR) continue;
+
           return Nan::ThrowError(ErrorMessage());
         }
+
         break;
       }
     }
