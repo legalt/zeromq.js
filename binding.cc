@@ -48,8 +48,6 @@
 #define ZMQ_CAN_MONITOR (ZMQ_VERSION > 30201)
 #define ZMQ_CAN_SET_CTX (ZMQ_VERSION_MAJOR == 3 && ZMQ_VERSION_MINOR >= 2) || ZMQ_VERSION_MAJOR > 3
 
-#define ZERO_COPY_MESSAGE_SEND 1
-
 using namespace v8;
 using namespace node;
 
@@ -145,7 +143,6 @@ namespace zmq {
 #endif
 
       class IncomingMessage;
-      class OutgoingMessage;
       static NAN_METHOD(Recv);
       static NAN_METHOD(Readv);
       static NAN_METHOD(Sendv);
@@ -1022,65 +1019,6 @@ namespace zmq {
 
       Nan::Persistent<Object> buf_;
       MessageReference* msgref_;
-  };
-
-  class Socket::OutgoingMessage {
-    public:
-      inline OutgoingMessage(Local<Object> buf)
-        : bufref_(new BufferReference(buf)) {
-        if (zmq_msg_init_data(&msg_, Buffer::Data(buf), Buffer::Length(buf),
-            BufferReference::FreeCallback, bufref_) < 0) {
-          delete bufref_;
-          Nan::ThrowError(ErrorMessage());
-        }
-      };
-
-      inline ~OutgoingMessage() {
-        if (zmq_msg_close(&msg_) < 0)
-          Nan::ThrowError(ErrorMessage());
-      };
-
-      inline operator zmq_msg_t*() {
-        return &msg_;
-      }
-
-    private:
-      class BufferReference {
-        public:
-          inline BufferReference(Local<Object> buf)
-            : persistent_(buf), async_(new uv_async_t) {
-            if (uv_async_init(uv_default_loop(), async_, Destroy) < 0) {
-              delete async_;
-              delete this;
-              Nan::ThrowError("Async initialization failed");
-            } else {
-              async_->data = this;
-            }
-          }
-
-          inline ~BufferReference() {
-            persistent_.Reset();
-          }
-
-          // Called by zmq when the message has been sent.
-          // NOTE: May be called from a worker thread. Do not modify V8/Node.
-          static void FreeCallback(void*, void* bufref) {
-            int result = uv_async_send(static_cast<BufferReference*>(bufref)->async_);
-            assert(result == 0);
-          }
-
-          static void Destroy(uv_async_t* async) {
-            uv_close(reinterpret_cast<uv_handle_t*>(async), on_uv_close);
-            BufferReference* bufref = static_cast<BufferReference*>(async->data);
-            delete bufref;
-          }
-        private:
-          Nan::Persistent<Object> persistent_;
-          uv_async_t* async_;
-      };
-
-    zmq_msg_t msg_;
-    BufferReference* bufref_;
   };
 
 
