@@ -1236,7 +1236,7 @@ namespace zmq {
         }
       }
 
-      Local<Value> dataToSend = batch->Get(Nan::GetCurrentContext(), i).ToLocalChecked().As<Object>();
+      Local<Value> dataToSend = batch->Get(Nan::GetCurrentContext(), i).ToLocalChecked().As<Value>();
       Local<Number> flagsObj = batch->Get(Nan::GetCurrentContext(), i + 1).ToLocalChecked().As<Number>();
 
       int flags = Nan::To<int>(flagsObj).FromJust();
